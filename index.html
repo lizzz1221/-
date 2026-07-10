@@ -117,6 +117,12 @@ td input,td select{padding:4px 6px;font-size:.95em;border-radius:6px}
 .gear-btn{width:32px;height:32px;border:none;background:none;cursor:pointer;font-size:18px;color:var(--ink-soft);display:flex;align-items:center;justify-content:center;border-radius:10px;padding:0}
 .gear-btn:hover{background:var(--accent-soft);color:var(--ink)}
 
+.search-wrap{display:flex;align-items:center;gap:2px;background:#fff;border-radius:16px;border:1px solid transparent;transition:all .25s}
+.search-wrap input{width:0;opacity:0;padding:0;border:none;background:none;transition:all .25s;font-size:.95em}
+.search-wrap input:focus{box-shadow:none}
+.search-wrap.open{border-color:var(--accent);box-shadow:0 2px 8px rgba(201,137,159,.15);padding-left:10px}
+.search-wrap.open input{width:150px;opacity:1;padding:6px 4px}
+
 .settings-section{margin-bottom:20px}
 .settings-section h3{border-bottom:1px solid var(--accent-soft);padding-bottom:6px}
 .setting-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #fdf1f6;gap:10px;flex-wrap:wrap}
@@ -170,35 +176,27 @@ td:hover .slot-del{display:inline}
   <div class="modal" id="modalContent"></div>
 </div>
 
-<script>document.write('<script src="data.js?v='+Date.now()+'"><\\/script>');</script>
+<script>document.write('<script src="data.js'+(location.protocol==='file:'?'':'?v='+Date.now())+'"><\/script>');</script>
 <script>
 const $=s=>document.querySelector(s);
-// 唯讀模式：data.js 存在時（發布給團員的版本）以嵌入資料執行，所有編輯功能停用
 const RO=!!window.VIEWER_DB;
 
-// ── Settings ──
 const DEFAULT_SETTINGS={
-  // 外觀
   accentColor:'#c9899f',
   fontSize:13,
   appTitle:'阿伯一次買購',
-  // 欄位名稱
   fieldNick:'暱稱',
   fieldItem:'商品',
   fieldQty:'數量',
   fieldPrice:'單價',
   fieldSeries:'系列',
   fieldNote:'備註',
-  // 欄位顯示
   showSeries:false,
   showNote:true,
   showPrice:true,
-  // 預設值
   defaultType:'basic',
   defaultStatus:'進行中',
-  // 狀態選項（可自訂）
   statuses:'進行中,已截團待收款,收款中,已完成收款,已到貨,已結團',
-  // 性質自訂
   typeCarryLabel:'帶多統計',
   typeCarryDesc:'社團售物，帶越多越優先',
   typeBoxLabel:'拆盒',
@@ -209,19 +207,16 @@ const DEFAULT_SETTINGS={
 function loadSettings(){
   if(RO)return{...DEFAULT_SETTINGS,...(window.VIEWER_SETTINGS||{})};
   const s=JSON.parse(localStorage.getItem('gp_settings')||'{}');
-  // 一次性遷移：舊預設主題色改為低飽和馬卡龍粉
   if((s.accentColor==='#185fa5'||s.accentColor==='#e07a9e')&&!localStorage.getItem('gp_accent_mig2')){
     s.accentColor='#c9899f';
     localStorage.setItem('gp_settings',JSON.stringify(s));
     localStorage.setItem('gp_accent_mig2','1');
   }
-  // 一次性遷移：舊標題改為新名稱
   if(s.appTitle==='社團周邊代購管理'&&!localStorage.getItem('gp_title_mig')){
     s.appTitle='阿伯一次買購';
     localStorage.setItem('gp_settings',JSON.stringify(s));
     localStorage.setItem('gp_title_mig','1');
   }
-  // 一次性遷移 v2：狀態選項改為 進行中/收款中/已到貨/已結團
   if(!localStorage.getItem('gp_status_mig2')){
     if(s.statuses){
       const drop=['開團中','已截單','已封存'];
@@ -233,7 +228,6 @@ function loadSettings(){
     localStorage.setItem('gp_settings',JSON.stringify(s));
     localStorage.setItem('gp_status_mig2','1');
   }
-  // 一次性遷移 v3：補上「已完成收款」狀態（排在收款中之後）
   if(!localStorage.getItem('gp_status_mig3')){
     if(s.statuses){
       const list=s.statuses.split(',').map(x=>x.trim()).filter(Boolean);
@@ -246,7 +240,6 @@ function loadSettings(){
     }
     localStorage.setItem('gp_status_mig3','1');
   }
-  // 一次性遷移 v4：補上「已截團待收款」狀態（排在進行中之後）
   if(!localStorage.getItem('gp_status_mig4')){
     if(s.statuses){
       const list=s.statuses.split(',').map(x=>x.trim()).filter(Boolean);
@@ -302,25 +295,22 @@ let _vdb=null;
 function loadDB(){
   if(RO){if(!_vdb)_vdb=window.VIEWER_DB;return _vdb;}
   const db=JSON.parse(localStorage.getItem('gp_db2')||'{"groups":[],"nid":1}');
-  // 舊喊單補上商品ID（款式名可跨商品重複，需要精準對應）
   let changed=false;
-  // 舊狀態對應到新狀態
   const statusMap={'開團中':'進行中','已截單':'收款中','已封存':'已結團'};
   for(const g of db.groups){
     if(statusMap[g.status]){g.status=statusMap[g.status];changed=true;}
-    // 過了截團時間的進行中團，自動轉為「已截團待收款」
     if(g.deadline&&g.status==='進行中'&&new Date(g.deadline)<new Date()){g.status='已截團待收款';changed=true;}
+    // 既有的已到貨團補上到貨時間（囤貨期限起算點，可在團內設定校正）
+    if(['已到貨','已結團'].includes(g.status)&&!g.arrivedAt){g.arrivedAt=Date.now();changed=true;}
   }
-  // 喊單人資料（跨團共用）：{暱稱:{contact:'',url:'',shots:[dataURL,...]}}
   if(!db.buyers)db.buyers={};
-  // 舊資料的 contact 若是網址，搬到 url 欄位
   for(const n of Object.keys(db.buyers)){
     const b=db.buyers[n];
     if(b&&b.contact&&/^https?:\/\//.test(b.contact)&&!b.url){b.url=b.contact;b.contact='';changed=true;}
   }
-  // 固團成員改為跨團共用：合併舊的團內名單
   if(!db.fixedTeam)db.fixedTeam={};
   if(!db.teamNotes)db.teamNotes={};
+  if(!db.units)db.units=[]; // 團體庫：{id,name,icon}
   for(const g of db.groups){
     if(g.fixedTeam){
       for(const[nick,slots]of Object.entries(g.fixedTeam)){
@@ -359,26 +349,45 @@ function syncHiddenStatsBtn(){
   btn.textContent=count?`復原統計 (${count})`:'復原統計';
 }
 
-// ── Home ──
+let homeSearch='',homeSearchOpen=false;
+function toggleHomeSearch(){
+  homeSearchOpen=!homeSearchOpen;
+  if(!homeSearchOpen)homeSearch='';
+  render();
+}
 function renderHome(){
   const db=loadDB();
-  // 唯讀模式以「狀態」篩選；管理模式以「性質」篩選
-  const groups=homeFilter?db.groups.filter(g=>RO?g.status===homeFilter:g.type===homeFilter):db.groups;
+  let groups=homeFilter?db.groups.filter(g=>RO?g.status===homeFilter:g.type===homeFilter):db.groups;
+  if(homeSearch.trim()){
+    const q=homeSearch.trim().toLowerCase();
+    groups=groups.filter(g=>{
+      if((g.name||'').toLowerCase().includes(q))return true;
+      const styles=(g.boxProducts||[]).flatMap(p=>[p.name,...(p.contents||[])]);
+      const carryItems=(g.items||[]).map(i=>i.name);
+      return [...styles,...carryItems].some(s=>(s||'').toLowerCase().includes(q));
+    });
+  }
   const active=groups.filter(g=>g.status!=='已封存');
   const archived=groups.filter(g=>g.status==='已封存');
 
   const TYPES=getTypes();const st=S();
-  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${RO?'.3rem':'1rem'}">
+  const searchIcon='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>';
+  let h=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${RO?'.3rem':'1rem'};gap:6px">
     <h1 style="margin:0">${esc(st.appTitle)}</h1>
+    <div style="flex:1"></div>
+    <div class="search-wrap ${homeSearchOpen?'open':''}">
+      <input id="homeSearchInput" placeholder="搜尋團名…" value="${esc(homeSearch)}" onkeydown="if(event.key==='Enter'){homeSearch=this.value;render();}">
+      ${homeSearchOpen?`<button class="gear-btn" onclick="homeSearch=document.getElementById('homeSearchInput').value;render()" title="搜尋">${searchIcon}</button>`:''}
+      <button class="gear-btn" onclick="toggleHomeSearch()" title="${homeSearchOpen?'關閉搜尋':'搜尋團名'}">${homeSearchOpen?'✕':searchIcon}</button>
+    </div>
     <button class="gear-btn" onclick="showSettings()" title="設定">⚙</button></div>
     ${RO&&window.VIEWER_DB.publishedAt?`<div class="muted" style="margin-bottom:1rem">資料更新時間：${esc(window.VIEWER_DB.publishedAt)}</div>`:''}
-    <div class="toolbar"><button class="bp" onclick="showNewGroupModal()">建立新團</button><button onclick="showFixedTeamModal()">固團成員</button><button onclick="showShipModal()">個人貨況查詢</button><button onclick="exportViewerData()">發布查詢資料</button><span class="muted">共 ${db.groups.length} 個團</span></div>
+    <div class="toolbar"><button class="bp" onclick="showNewGroupModal()">建立新團</button><button onclick="showFixedTeamModal()">固團成員</button><button onclick="showUnitsModal()">團體管理</button><button onclick="showShipModal()">個人貨況查詢</button><button onclick="document.getElementById('importDataFile').click()">匯入 data.js</button><input id="importDataFile" type="file" accept=".js,.txt" style="display:none" onchange="importViewerData(this)"><button onclick="exportViewerData()">發布查詢資料</button><span class="muted">共 ${db.groups.length} 個團</span></div>
     <div class="filter-chips"><span class="chip ${homeFilter===''?'active':''}" onclick="homeFilter='';render()">全部</span>
     ${RO
       ?['進行中','已截團待收款','收款中','已完成收款','已到貨'].map(s=>`<span class="chip ${homeFilter===s?'active':''}" onclick="homeFilter='${s}';render()">${s}</span>`).join('')
       :Object.entries(TYPES).map(([k,v])=>`<span class="chip ${homeFilter===k?'active':''}" onclick="homeFilter='${k}';render()">${v.label}</span>`).join('')}</div>`;
 
-  // 依開團時間新→舊排列（同日以建立順序新的在前）
   const byNew=(a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')||b.id-a.id;
   active.sort(byNew);archived.sort(byNew);
 
@@ -387,9 +396,15 @@ function renderHome(){
   if(archived.length){h+=`<h3 style="margin-top:1.5rem;color:#888780">已封存</h3><div class="group-grid">`;for(const g of archived) h+=groupCard(g,true);h+=`</div>`;}
   $('#app').innerHTML=h;
   syncHiddenStatsBtn();
+  // 搜尋展開時保持輸入焦點（重繪會失焦）
+  if(homeSearchOpen){
+    const inp=$('#homeSearchInput');
+    if(inp){inp.focus();const L=inp.value.length;inp.setSelectionRange(L,L);}
+  }
 }
 
 function groupCard(g,dim){
+  const allUnits=getUnits();
   const buyers=new Set(g.orders.map(o=>o.nick)).size;
   let productCount=0;
   if(g.type==='box')productCount=(g.boxProducts||[]).length;
@@ -402,14 +417,13 @@ function groupCard(g,dim){
   return `<div class="group-card" onclick="goGroup(${g.id})" style="${dim?'opacity:.6':''}">
     ${g.cover?`<img class="gc-cover" src="${g.cover}" style="object-position:${coverPos(g)}">`:`<div class="gc-cover gc-ph"></div>`}
     <div class="gc-body">
-      <div class="top"><span class="name">${esc(g.name)}</span><span class="badge ${SB[g.status]||'b-gray'}">${g.status}</span></div>
+      <div class="top"><span class="name">${g.starGroup?'<span style="color:#d4a017">★</span> ':''}${esc(g.name)}</span><span class="badge ${SB[g.status]||'b-gray'}">${g.status}</span></div>
       <div><span class="badge ${ti.badge}">${ti.label}</span></div>
-      <div class="meta"><span>${buyers} 人</span><span>${productCount} 種商品</span></div>
+      <div class="meta"><span>${buyers} 人</span><span>${productCount} 種商品</span>${(g.unitIds||[]).length?`<span style="display:inline-flex;gap:3px;align-items:center">${g.unitIds.map(id=>{const u=allUnits.find(x=>x.id===id);return u?(u.icon?`<img src="${u.icon}" title="${esc(u.name)}" style="width:18px;height:18px;object-fit:cover;border-radius:4px">`:`<span title="${esc(u.name)}" style="font-size:11px;padding:1px 5px;background:var(--accent-soft);border-radius:8px">${esc(u.name)}</span>`):'';}).join('')}</span>`:''}</div>
       <div class="meta"><span>${openDate} ~ ${closeDate}</span></div>
     </div></div>`;
 }
 
-// ── Group Detail ──
 function renderGroup(){
   const g=getG(gid);if(!g){goHome();return;}
   const T=getTypes(),SBM=getSB(),st=S();
@@ -447,7 +461,6 @@ function renderGroup(){
   syncHiddenStatsBtn();
 }
 
-// ── Orders Tab ──
 function renderOrdersTab(g){
   const st=S();
   const _team=getTeam();
@@ -474,7 +487,6 @@ function renderOrdersTab(g){
 
   h+=`<div class="card"><div class="card-header"><h3 style="margin:0">喊單列表 (${g.orders.length})</h3>
     <button class="bs bd" onclick="clearOrders(${g.id})">清除全部</button></div>`;
-  // 商品篩選：拆盒團依商品分組，可選整個商品或單一款式
   let itemFilterHtml;
   const bps=g.boxProducts||[];
   if(isBox&&bps.length){
@@ -531,14 +543,14 @@ function renderOrdersTab(g){
   h+=`</div>`;return h;
 }
 
-// ── Box Setup Tab (拆團狀況) ──
 let _bpOpen={};
 function toggleBpDetail(pid){_bpOpen[pid]=!_bpOpen[pid];render();}
-// ── 個人貨況查詢（到貨/出貨狀態存於各團 g.ship） ──
 let _spNick='',_spGid='',_spHide=false;
 function showShipModal(){
   const db=loadDB();
-  const nicks=[...new Set(db.groups.flatMap(g=>g.orders.map(o=>o.nick)))].sort();
+  const team=getTeam();
+  const nicks=Object.keys(team).sort();
+  if(_spNick&&!team[_spNick])_spNick='';
   let rowsHtml='';
   if(_spNick){
     const gs=_spGid?db.groups.filter(g=>g.id===parseInt(_spGid)):db.groups;
@@ -562,22 +574,39 @@ function showShipModal(){
           <td>${arrCell}</td>
           <td><span class="badge ${st.s?'b-green':'b-gray'}" style="cursor:pointer" title="點擊切換" onclick="toggleShip(${g.id},'${encodeURIComponent(fullKey)}','s')">${st.s?'已出貨':'未出貨'}</span></td></tr>`;
       }
-      if(rows)rowsHtml+=`<h3 style="margin:10px 0 4px">${esc(g.name)}</h3>
+      // 囤貨期限：轉成已到貨後 2 個月
+      let storageLine='';
+      if(groupArrived&&g.arrivedAt){
+        const limit=new Date(g.arrivedAt);
+        limit.setMonth(limit.getMonth()+2);
+        const days=Math.ceil((limit-new Date())/86400000);
+        const ds=`${limit.getFullYear()}/${String(limit.getMonth()+1).padStart(2,'0')}/${String(limit.getDate()).padStart(2,'0')}`;
+        storageLine=days<0
+          ?`<span class="badge b-red">囤貨期限 ${ds}（已逾期 ${-days} 天）</span>`
+          :days<=14
+            ?`<span class="badge b-amber">囤貨期限 ${ds}（剩 ${days} 天）</span>`
+            :`<span class="badge b-gray">囤貨期限 ${ds}</span>`;
+      }
+      if(rows)rowsHtml+=`<h3 style="margin:10px 0 4px"><span onclick="closeModal();goGroup(${g.id})" style="cursor:pointer;color:var(--accent)" title="前往該團">${esc(g.name)}</span> ${storageLine}</h3>
         <div style="overflow-x:auto"><table><thead><tr><th>商品</th><th>數量</th><th>到貨</th><th>出貨</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     }
     if(!rowsHtml)rowsHtml='<div class="empty">無資料</div>';
-  } else rowsHtml='<div class="empty">請選擇暱稱</div>';
+  } else rowsHtml=nicks.length?'<div class="empty">請選擇固團成員暱稱</div>':'<div class="empty">尚未設定固團成員</div>';
+  // 未選暱稱時團名下拉只有「顯示全部」；選了暱稱後才列出該成員有喊單的團
+  const gidOptions=_spNick
+    ?db.groups.filter(g=>getConfirmedOrders(g).some(o=>o.nick===_spNick))
+    :[];
+  if(_spGid&&!gidOptions.some(g=>g.id===parseInt(_spGid)))_spGid='';
   openModal(`<h3>個人貨況查詢</h3>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;align-items:center">
-      <select onchange="_spNick=this.value;showShipModal()"><option value="">暱稱</option>${nicks.map(n=>`<option value="${esc(n)}" ${_spNick===n?'selected':''}>${esc(n)}</option>`).join('')}</select>
-      <select onchange="_spGid=this.value;showShipModal()"><option value="">顯示全部</option>${db.groups.map(g=>`<option value="${g.id}" ${_spGid==g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>
+      <select onchange="_spNick=this.value;_spGid='';showShipModal()"><option value="">固團成員</option>${nicks.map(n=>`<option value="${esc(n)}" ${_spNick===n?'selected':''}>${esc(n)}</option>`).join('')}</select>
+      <select onchange="_spGid=this.value;showShipModal()"><option value="">顯示全部</option>${gidOptions.map(g=>`<option value="${g.id}" ${_spGid==g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>
       <label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${_spHide?'checked':''} onchange="_spHide=this.checked;showShipModal()">隱藏已出貨</label>
     </div>
     <div style="max-height:60vh;overflow-y:auto">${rowsHtml}</div>
     <div class="btn-row" style="margin-top:10px"><button onclick="closeModal()">關閉</button></div>`);
 }
-// 到貨狀態：跟著團的狀態走（已到貨/已結團＝到貨），可對個別項目手動標記缺件（na）
 function effArrived(g,key){
   if(!['已到貨','已結團'].includes(g.status))return false;
   return !(((g.ship||{})[key]||{}).na);
@@ -587,7 +616,6 @@ function toggleShip(gid,keyEnc,field){
   upG(gid,g=>{if(!g.ship)g.ship={};const st=g.ship[key]||{};st[field]=st[field]?0:1;g.ship[key]=st;});
   showShipModal();
 }
-// 喊單總覽的出貨/缺件勾選（與個人貨況查詢共用同一份狀態）
 function toggleShipKey(gid,keyEnc,field){
   const key=decodeURIComponent(keyEnc);
   const f=field||'s';
@@ -595,13 +623,13 @@ function toggleShipKey(gid,keyEnc,field){
   render();
 }
 
-// ── 發布團員查詢資料 ──
-// 產生 data.js：內含去敏後的完整資料庫（只留拆盒團，去除截圖/聯絡方式/成員備註）。
-// 將 data.js 與 index.html 一起上傳，index.html 偵測到它就會以「唯讀模式」執行，
-// 團員看到的畫面與管理端相同，但所有編輯功能停用。
 function exportViewerData(){
   const db=loadDB();
-  const groups=db.groups.filter(g=>g.type==='box');
+  // 深拷貝後剝除私人資料（收款的個人備註不公開）
+  const groups=JSON.parse(JSON.stringify(db.groups.filter(g=>g.type==='box')));
+  for(const g of groups){
+    for(const nick of Object.keys(g.pay||{}))delete g.pay[nick].pnote;
+  }
   if(!groups.length){alert('沒有可發布的拆盒團資料');return;}
   const pub={
     groups,
@@ -609,6 +637,7 @@ function exportViewerData(){
     fixedTeam:db.fixedTeam||{}, // 排單需要固團位子才會與管理端一致
     teamNotes:{},               // 成員備註不公開
     buyers:{},                  // 聯絡方式與截圖不公開
+    units:db.units||[],         // 團體圖示庫，供首頁卡片顯示
     publishedAt:new Date().toLocaleString('zh-TW')
   };
   const file='window.VIEWER_DB='+JSON.stringify(pub)+
@@ -618,9 +647,32 @@ function exportViewerData(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='data.js';a.click();
   alert('已下載 data.js。\n把「index.html＋data.js」一起上傳到網站空間（index.html 有 data.js 在旁邊時會自動變成唯讀查詢版）。\n之後資料更新，只要重新發布並覆蓋 data.js。');
 }
+function importViewerData(input){
+  const f=input.files&&input.files[0];
+  input.value='';
+  if(!f)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const win={};
+      new Function('window',String(e.target.result))(win);
+      if(!win.VIEWER_DB||!Array.isArray(win.VIEWER_DB.groups))throw new Error('找不到 VIEWER_DB');
+      const db=JSON.parse(JSON.stringify(win.VIEWER_DB));
+      if(!confirm(`匯入後會覆蓋此裝置目前管理資料。\n將匯入 ${db.groups.length} 個團，確定繼續？`))return;
+      localStorage.setItem('gp_db2',JSON.stringify(db));
+      if(win.VIEWER_SETTINGS)localStorage.setItem('gp_settings',JSON.stringify(win.VIEWER_SETTINGS));
+      if(win.VIEWER_TEXTOV)localStorage.setItem('gp_text_overrides',JSON.stringify(win.VIEWER_TEXTOV));
+      _vdb=null;view='home';gid=null;tab='orders';sNick='';sItem='';homeFilter='';
+      alert('匯入完成');
+      applyTheme();render();
+    }catch(err){
+      alert('匯入失敗：請確認選的是本站匯出的 data.js');
+      console.error(err);
+    }
+  };
+  reader.readAsText(f);
+}
 
-// ── 固團成員名單（跨團共用，存於 db.fixedTeam） ──
-// db.fixedTeam = { 暱稱: { 款式: {t:'slot',r:1} 或 {t:'pick'} } }
 function getTeam(){return loadDB().fixedTeam||{};}
 function ftStyles(){
   const db=loadDB();
@@ -661,13 +713,41 @@ function ftAddSlot(btn){
   member.querySelector('.ftSlots').insertAdjacentHTML('beforeend',ftSlotChip(s,posObj));
   inp.value='';
 }
-let _ftTeam={},_ftNotes={};
+let _ftTeam={},_ftNotes={},_ftPass={};
+// 固位 pass 統計：特殊團（★）截團後，固位成員沒喊自己固位角色的商品即算一次 pass（連續累計）
+// 只要在較新的特殊團裡有喊該角色，之前累積的 pass 次數就歸零重新算起
+// 條件：該團有販售該角色（在某商品的款式中）；有喊單（綁單不算）即中斷連續紀錄
+function passStats(){
+  const team=getTeam();
+  // 依開團時間新→舊排序，逐團往回推算「連續 pass 次數」
+  const byNew=(a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')||b.id-a.id;
+  const starGroups=loadDB().groups.filter(g=>g.type==='box'&&g.starGroup&&g.status!=='進行中').sort(byNew);
+  const res={};
+  for(const[nick,slots]of Object.entries(team)){
+    for(const[style,pos]of Object.entries(slots||{})){
+      if(pos.t!=='slot')continue; // 只監控固位角色
+      let count=0;
+      for(const g of starGroups){
+        const styles=new Set((g.boxProducts||[]).flatMap(p=>p.contents));
+        if(!styles.has(style))continue; // 該團沒賣這個角色不算
+        const hasOrder=g.orders.some(o=>!o.bind&&o.nick===nick&&o.item===style);
+        if(hasOrder)break; // 有喊單 → 中斷連續紀錄，之前的 pass 不列入
+        count++;
+      }
+      if(count>0){res[nick]=res[nick]||{};res[nick][style]=count;}
+    }
+  }
+  return res;
+}
 function ftOverviewRow(nick,slots){
   const summary=Object.entries(slots||{}).map(([s,pos])=>`${esc(s)} ${pos.t==='pick'?'撿漏':'固'+(pos.r||1)}`).join('、')||'<span class="muted">（無角色位）</span>';
   const note=_ftNotes[nick]?`<span class="muted" style="font-size:11px;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis">${esc(_ftNotes[nick])}</span>`:'';
+  const passHtml=Object.entries(_ftPass[nick]||{}).map(([s,n])=>
+    `<span class="badge ${n>=2?'b-red':'b-amber'}" title="★${esc(s)} pass ${n} 次${n>=2?'，建議撤銷固位':''}">${n>=2?'⚠ ':''}★${esc(s)}×${n}</span>`).join(' ');
   return `<div class="ft-row" data-nick="${esc(nick)}" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:.5px solid #fdf1f6">
     <strong style="color:#a32d2d;white-space:nowrap">${esc(nick)}</strong>
     <span style="flex:1;font-size:12px">${summary}</span>
+    ${passHtml}
     ${note}
     <button class="bs" onclick="ftExpand(this)">編輯</button></div>`;
 }
@@ -690,8 +770,12 @@ function ftStyleView(){
   for(const s of keys){
     const slots=byStyle[s].filter(x=>x.pos.t==='slot').sort((a,b)=>(a.pos.r||1)-(b.pos.r||1));
     const picks=byStyle[s].filter(x=>x.pos.t==='pick');
-    const slotChips=slots.map(x=>`<span style="display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid #e0ddf5;border-radius:12px;padding:2px 8px 2px 3px;font-size:12px;white-space:nowrap">
-      <span style="background:#534ab7;color:#fff;border-radius:50%;width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;flex-shrink:0">${x.pos.r||1}</span>${esc(x.nick)}</span>`).join('');
+    const slotChips=slots.map(x=>{
+      const passN=(_ftPass[x.nick]||{})[s]||0;
+      const passBadge=passN>0?` <span style="color:${passN>=2?'#a32d2d':'#c08a3e'};font-weight:bold">${passN>=2?'⚠':''}pass${passN}</span>`:'';
+      return `<span style="display:inline-flex;align-items:center;gap:4px;background:#fff;border:1px solid ${passN>=2?'#f3b8c4':'#e0ddf5'};border-radius:12px;padding:2px 8px 2px 3px;font-size:12px;white-space:nowrap">
+      <span style="background:#534ab7;color:#fff;border-radius:50%;width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;flex-shrink:0">${x.pos.r||1}</span>${esc(x.nick)}${passBadge}</span>`;
+    }).join('');
     const pickChips=picks.map(x=>`<span style="display:inline-flex;align-items:center;background:#fff;border:1px solid #cfe5e2;border-radius:12px;padding:2px 8px;font-size:12px;white-space:nowrap">${esc(x.nick)}</span>`).join('');
     h+=`<div style="background:#fef7fa;border-radius:10px;padding:10px;border:1px solid #fdf1f6">
       <div style="font-weight:bold;font-size:14px;margin-bottom:8px;padding-bottom:5px;border-bottom:2px solid #534ab7">${esc(s)}</div>
@@ -713,6 +797,7 @@ function showFixedTeamModal(keepTeam){
     _ftTeam=JSON.parse(JSON.stringify(getTeam()));
     _ftNotes=JSON.parse(JSON.stringify(loadDB().teamNotes||{}));
   }
+  _ftPass=passStats();
   const isStyle=_ftView==='style';
   let h=`<h3>固團成員（跨團共用）</h3>
     <div style="display:flex;gap:4px;margin-bottom:10px">
@@ -748,7 +833,6 @@ function saveFixedTeam(){
   document.querySelectorAll('#ftList .ft-row,#ftList .ft-member').forEach(el=>{
     const nick=el.dataset.nick;
     if(el.classList.contains('ft-row')){
-      // 未展開編輯：沿用原資料
       team[nick]=_ftTeam[nick]||{};
       if(_ftNotes[nick])notes[nick]=_ftNotes[nick];
       return;
@@ -767,6 +851,74 @@ function saveFixedTeam(){
   });
   const db=loadDB();db.fixedTeam=team;db.teamNotes=notes;saveDB(db);
   closeModal();render();
+}
+
+// ── 團體庫（跨團共用，存於 db.units：{id,name,icon}） ──
+let _unitIconTmp=null;
+function getUnits(){return loadDB().units||[];}
+function onUnitIconChange(input){
+  imgFileToData(input.files[0],d=>{
+    _unitIconTmp=d;
+    const prev=$('#unitIconPrev');if(prev){prev.src=d;prev.style.display='inline-block';}
+  },120,0.85);
+}
+document.addEventListener('paste',e=>{
+  if(!$('#unitIconPrev'))return;
+  for(const it of(e.clipboardData?.items||[])){
+    if(it.type.startsWith('image/')){
+      e.preventDefault();
+      imgFileToData(it.getAsFile(),d=>{
+        _unitIconTmp=d;
+        const prev=$('#unitIconPrev');if(prev){prev.src=d;prev.style.display='inline-block';}
+      },120,0.85);
+      return;
+    }
+  }
+});
+function showUnitsModal(){
+  const units=getUnits();
+  _unitIconTmp=null;
+  let h=`<h3>團體管理</h3>
+    <p class="muted" style="margin-bottom:10px">新增團體圖示，供各團在「團內設定」勾選標示所屬團體，會顯示在首頁團卡片上。</p>
+    <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:120px"><label>團體名稱</label><input id="unitName" placeholder="例：Ave Mujica"></div>
+      <div class="form-group"><label>圖示（可貼上）</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="file" accept="image/*" onchange="onUnitIconChange(this)" style="font-size:12px">
+          <img id="unitIconPrev" style="display:none;width:28px;height:28px;object-fit:cover;border-radius:6px;border:1px solid var(--line)">
+        </div></div>
+      <button class="bs bp" onclick="addUnit()">新增</button>
+    </div>
+    <div id="unitList" style="display:flex;flex-wrap:wrap;gap:8px">`;
+  h+=units.map(u=>unitChip(u)).join('')||'<span class="muted">尚未建立團體</span>';
+  h+=`</div><div class="btn-row" style="margin-top:14px"><button onclick="closeModal()">關閉</button></div>`;
+  openModal(h);
+}
+function unitChip(u){
+  return `<span class="unit-chip" data-id="${u.id}" style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:3px 10px 3px 4px">
+    ${u.icon?`<img src="${u.icon}" style="width:22px;height:22px;object-fit:cover;border-radius:5px">`:'<span style="width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;background:var(--accent-soft);border-radius:5px;font-size:11px">?</span>'}
+    <span style="font-size:12px">${esc(u.name)}</span>
+    <span onclick="delUnit(${u.id})" style="cursor:pointer;color:#a32d2d;font-weight:bold;font-size:12px" title="刪除團體">✕</span></span>`;
+}
+function addUnit(){
+  const name=$('#unitName').value.trim();
+  if(!name){alert('請輸入團體名稱');return;}
+  const db=loadDB();
+  if(!db.units)db.units=[];
+  if(!db.unitNid)db.unitNid=1;
+  db.units.push({id:db.unitNid++,name,icon:_unitIconTmp||''});
+  saveDB(db);
+  $('#unitList').innerHTML=db.units.map(u=>unitChip(u)).join('');
+  $('#unitName').value='';_unitIconTmp=null;
+  const prev=$('#unitIconPrev');if(prev)prev.style.display='none';
+}
+function delUnit(id){
+  if(!confirm('刪除此團體？已勾選此團體的團會一併移除關聯。'))return;
+  const db=loadDB();
+  db.units=(db.units||[]).filter(u=>u.id!==id);
+  for(const g of db.groups){if(g.unitIds)g.unitIds=g.unitIds.filter(x=>x!==id);}
+  saveDB(db);
+  $('#unitList').innerHTML=db.units.map(u=>unitChip(u)).join('')||'<span class="muted">尚未建立團體</span>';
 }
 
 function toggleFixEnd(gid){
@@ -819,7 +971,6 @@ function renderBoxSetupTab(g){
   h+=`</div>`;return h;
 }
 
-// ── Single Tab (單領) ──
 function renderSingleTab(g){
   if(!g.boxProducts) g.boxProducts=[];
   const singles=g.boxProducts.filter(p=>p.kind==='single');
@@ -902,7 +1053,6 @@ function bpDetailHtml(g,p){
 
   if(info.boxesNeeded>0){
     const bind=p.bindItems||{};
-    // 有上限盒數：顯示全部；無上限：只顯示到已填滿之後的 10 配
     let showN=info.boxesNeeded;
     if(!p.maxBoxes){
       const filled=info.boxes.filter(b=>b.every(s=>s.buyer)).length;
@@ -933,7 +1083,6 @@ function bpDetailHtml(g,p){
   return h;
 }
 
-// 帶餘提配資格：該暱稱在「尚未成團的配」裡要有喊單（已成團的不算）
 function hasUnconfirmedOrders(g,p,nick){
   const info=calcBoxes(g,p);
   for(const box of info.boxes){
@@ -943,7 +1092,6 @@ function hasUnconfirmedOrders(g,p,nick){
   return false;
 }
 
-// 手動編輯排單表格：移除某格的喊單（數量-1）
 function removeSlotUnit(gid,pid,boxIdx,itemEnc,nickEnc,isBind){
   const item=decodeURIComponent(itemEnc),nick=decodeURIComponent(nickEnc);
   if(!confirm(`移除 ${nick} 的「${item}」1 個？`))return;
@@ -955,7 +1103,6 @@ function removeSlotUnit(gid,pid,boxIdx,itemEnc,nickEnc,isBind){
   });
   render();
 }
-// 手動編輯排單表格：點空格直接追加喊單並釘選該格（優先於所有排序規則）
 function fillSlot(gid,pid,boxIdx,itemEnc){
   const item=decodeURIComponent(itemEnc);
   const g=getG(gid);
@@ -992,7 +1139,6 @@ function doFillSlot(gid,pid,boxIdx,itemEnc){
   closeModal();render();
 }
 
-// 綁物選擇：為該配的需綁買家指定要綁的餘量款式
 function showBindModal(gid,pid,boxIdx){
   const g=getG(gid);const p=(g.boxProducts||[]).find(b=>b.id===pid);if(!p)return;
   const info=calcBoxes(g,p);
@@ -1026,7 +1172,6 @@ function calcBoxes(g,p){
   const demands={};
   const buyerMap={};
   for(const c of p.contents){demands[c]=0;buyerMap[c]=[];}
-  // 帶餘提配（僅在本商品內生效）：帶走餘量者，其既有喊單可提前，每款最多提前「帶餘數量」個
   const liftQty={};const liftAdd={};
   for(const o of g.orders){
     if(o.lift&&!o.bind&&p.contents.includes(o.item)&&orderMatches(p,o)){
@@ -1052,10 +1197,6 @@ function calcBoxes(g,p){
   let surplus=0;
   for(const c of p.contents) surplus+=Math.max(0,boxesNeeded-(demands[c]||0));
 
-  // 排序（依款式各自計算）：
-  // 固位優先期間：該款固位（依固位數）→ 該款撿漏 → 固團但該款無位 → 一般（依商品排序規則）→ 綁單
-  // 結束固位優先後：切點之後的喊單，固位效力退化為撿漏；切點前的喊單不受影響
-  // 成員位子優先讀固團名單（g.fixedTeam），無名單記錄才用喊單上的舊設定
   const rule=p.sortRule||'fifo';
   const team=getTeam();
   const slotActive=e=>!g.fixEnded||(g.fixEndAt!=null&&e.oid<g.fixEndAt);
@@ -1094,8 +1235,6 @@ function calcBoxes(g,p){
       for(let i=0;i<b.qty;i++) remaining[c].push({nick:b.nick,bind:b.bind,fixed:b.fixed,isLift:b.isLift});
     }
   }
-  // 帶餘提配：鎖定「不含帶餘」時已填滿的配；未成的配中，
-  // 每位提配者的餘量與被提的喊單以「區塊」對齊，保證落在同一配
   const minNoLift=p.contents.length?Math.min(...p.contents.map(c=>(demands[c]||0)-(liftAdd[c]||0))):0;
   const lockN=Math.min(Math.max(0,minNoLift),boxesNeeded);
   const liftersOrder=[];const _seenL={};
@@ -1103,7 +1242,6 @@ function calcBoxes(g,p){
     if(o.lift&&!o.bind&&p.contents.includes(o.item)&&orderMatches(p,o)&&!_seenL[o.nick]){_seenL[o.nick]=1;liftersOrder.push(o.nick);}
   }
   if(liftersOrder.length){
-    // 帶餘單位一律先抽出，鎖定區只由一般喊單組成（已成的配完全不受帶餘影響）
     const styleData={};
     for(const c of p.contents){
       const q=remaining[c];
@@ -1112,9 +1250,7 @@ function calcBoxes(g,p){
       const locked=nonLift.slice(0,lockN);
       const rest=nonLift.slice(lockN);
       const byNick={};const promoUsed={};const normal=[];
-      // 帶餘單位進提配者區塊
       for(const u of liftUnits){(byNick[u.nick]=byNick[u.nick]||[]).push(u);}
-      // 既有喊單提前：每款上限＝帶餘數量，僅算未成區
       for(const u of rest){
         if(!u.bind&&liftQty[u.nick]>0&&(promoUsed[u.nick]||0)<liftQty[u.nick]){
           promoUsed[u.nick]=(promoUsed[u.nick]||0)+1;u.lifted=true;
@@ -1124,7 +1260,6 @@ function calcBoxes(g,p){
       }
       styleData[c]={locked,byNick,normal};
     }
-    // 區塊大小＝該提配者各款單位數的最大值，依提配登記順序排區塊
     const blocks={};let offsetTotal=0;
     for(const nick of liftersOrder){
       const size=Math.max(0,...p.contents.map(c=>(styleData[c].byNick[nick]||[]).length));
@@ -1136,14 +1271,12 @@ function calcBoxes(g,p){
       for(const nick of liftersOrder){
         (byNick[nick]||[]).forEach((u,i)=>{arr[blocks[nick]+i]=u;});
       }
-      // 一般單位先補洞，再往後排
       const out=[];let ni=0;
       for(let i=0;i<arr.length;i++){out.push(arr[i]!==null?arr[i]:(ni<normal.length?normal[ni++]:null));}
       while(ni<normal.length)out.push(normal[ni++]);
       remaining[c]=locked.concat(out);
     }
   }
-  // 手動釘選：指定格子優先於所有規則，從佇列中預留該暱稱的單位
   const pins=p.pins||{};
   const reserved={};
   for(const[key,nick]of Object.entries(pins)){
@@ -1163,11 +1296,9 @@ function calcBoxes(g,p){
     });
     const emptySlots=box.filter(s=>!s.buyer);
     if(!emptySlots.length){
-      // 全滿：若有綁單填入則為含綁成團
       if(box.some(s=>s.buyer&&s.buyer.bind)){box.status='含綁成團';bindComplete++;}
       else{box.status='成團';complete++;}
     } else {
-      // 需綁款的買家（非綁單）提供綁量，足以補滿空位則含綁成團
       let bindCap=0;
       for(const s of box){
         if(s.buyer&&!s.buyer.bind&&bind[s.item])bindCap+=bind[s.item];
@@ -1181,7 +1312,6 @@ function calcBoxes(g,p){
   return {demands,buyerMap,maxDemand,minDemand,boxesNeeded,complete,bindComplete,surplus,boxes};
 }
 
-// ── Items Tab (carry only) ──
 function renderItemsTab(g){
   let h=`<div class="card"><div class="card-header"><h3 style="margin:0">商品庫存</h3>
     <button class="bs bp" onclick="showAddItemModal(${g.id})">新增商品</button></div>
@@ -1203,7 +1333,6 @@ function renderItemsTab(g){
   h+=`</div>`;return h;
 }
 
-// ── Priority (carry only) ──
 function renderPriorityTab(g){
   return `<div class="card"><h3>帶多優先計算</h3>
     <div class="form-row"><div class="form-group"><label>排序依據</label><select id="prioMode">
@@ -1212,7 +1341,6 @@ function renderPriorityTab(g){
     <div class="btn-row"><button class="bp" onclick="calcPriority(${g.id})">計算</button></div></div><div id="prioResult"></div>`;
 }
 
-// ── Buyers Tab ──
 function renderBuyersTab(g){
   const st=S();const byB={};
   for(const o of getConfirmedOrders(g)){
@@ -1223,8 +1351,7 @@ function renderBuyersTab(g){
   const allSorted=Object.entries(byB).sort((a,b)=>b[1].qty-a[1].qty);
   const sorted=allSorted.filter(([nick])=>!hiddenStats.has(nick));
   let h=`<div class="card"><h3>已成團統計 (${sorted.length})</h3>
-    ${g.type==='box'?'<p class="muted" style="margin-bottom:8px">僅列入已成團／含綁成團的配，未成團不計</p>':''}
-    ${hiddenStats.size?`<p class="muted" style="margin-bottom:8px">已隱藏 ${hiddenStats.size} 位，可用左下角「復原統計」恢復。</p>`:''}`;
+    ${g.type==='box'?'<p class="muted" style="margin-bottom:8px">僅列入已成團／含綁成團的配，未成團不計</p>':''}`;
   const isBox=g.type==='box';
   const hasAnyAdj=isBox&&(g.boxProducts||[]).some(p=>p.adjustPrice&&p.itemPrices);
   if(!sorted.length){h+=`<div class="empty">無買家</div>`;}
@@ -1301,8 +1428,6 @@ function restoreHiddenStats(gid){
   closeModal();render();
 }
 
-// ── Pay Tab (收款狀況，存於 g.pay) ──
-// 應付總額：可手動覆寫（g.pay[nick].totalOv），顯示時加 *
 function payTotal(g,nick,computed){
   const p=(g.pay||{})[nick];
   return p&&p.totalOv!=null?p.totalOv:computed;
@@ -1316,7 +1441,7 @@ function renderPayTab(g){
   let h=`<div class="card"><h3>收款狀況</h3>`;
   if(!sorted.length){h+=`<div class="empty">無資料</div>`;}
   else{
-    h+=`<div style="overflow-x:auto"><table><thead><tr><th>暱稱</th><th>應付總額</th><th>已收款項</th><th>狀態</th><th>備註</th><th></th></tr></thead><tbody>`;
+    h+=`<div style="overflow-x:auto"><table><thead><tr><th>暱稱</th><th>應付總額</th><th>已收款項</th><th>狀態</th><th>備註</th>${RO?'':'<th>個人備註</th>'}<th></th></tr></thead><tbody>`;
     for(const[nick,computed]of sorted){
       const p=pay[nick]||{paid:0,note:''};
       const total=payTotal(g,nick,computed);
@@ -1330,6 +1455,7 @@ function renderPayTab(g){
       h+=`<tr><td>${team[nick]?`<span style="color:#a32d2d;font-weight:bold">${esc(nick)}</span>`:esc(nick)}</td>
         <td>$${total.toLocaleString()}${isOv?'<span style="color:#d16277;font-weight:bold">*</span>':''}</td><td>${p.paid?'$'+p.paid.toLocaleString():'-'}</td><td>${st}</td>
         <td class="muted" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p.note||'')}</td>
+        ${RO?'':`<td class="muted" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8a75c9">${esc(p.pnote||'')}</td>`}
         <td><button class="bs bg" onclick="showPayModal(${g.id},'${encodeURIComponent(nick)}')">編輯</button></td></tr>`;
     }
     h+=`</tbody></table></div>`;
@@ -1348,7 +1474,8 @@ function showPayModal(gid,nickEnc){
       <div class="form-group"><label>應付總額（改動後會標 *）</label><input id="payTotal" type="number" min="0" value="${total}"></div>
       <div class="form-group"><label>已收款項</label><input id="payAmt" type="number" min="0" value="${p.paid||''}"></div>
     </div>
-    <div class="form-group" style="margin-bottom:10px"><label>備註</label><input id="payNote" value="${esc(p.note||'')}"></div>
+    <div class="form-group" style="margin-bottom:10px"><label>備註（團員看得到）</label><input id="payNote" value="${esc(p.note||'')}"></div>
+    <div class="form-group" style="margin-bottom:10px"><label>個人備註（僅後台可見）</label><input id="payPNote" value="${esc(p.pnote||'')}"></div>
     <div class="btn-row">
       <button class="bs" onclick="document.getElementById('payAmt').value=document.getElementById('payTotal').value">填入全額</button>
       <button class="bs" onclick="document.getElementById('payTotal').value=${computed}">還原系統計算</button>
@@ -1360,18 +1487,18 @@ function savePay(gid,nickEnc,computed){
   const nick=decodeURIComponent(nickEnc);
   const paid=parseFloat($('#payAmt').value)||0;
   const note=$('#payNote').value.trim();
+  const pnote=$('#payPNote').value.trim();
   const totalIn=parseFloat($('#payTotal').value);
   upG(gid,g=>{
     if(!g.pay)g.pay={};
     const rec={paid,note};
-    // 與系統計算不同才記錄覆寫
+    if(pnote)rec.pnote=pnote;
     if(!isNaN(totalIn)&&totalIn!==computed)rec.totalOv=totalIn;
     g.pay[nick]=rec;
   });
   closeModal();render();
 }
 
-// ── Group Settings Tab ──
 function renderGroupSettingsTab(g){
   _gCover=null;
   const dateVal=(g.createdAt||'').replace(/\//g,'-');
@@ -1386,8 +1513,22 @@ function renderGroupSettingsTab(g){
       <div class="form-group"><label>開團日期</label><input id="gsDate" type="date" value="${esc(dateVal)}"></div>
       <div class="form-group"><label>截止時間</label><input id="gsDeadline" type="datetime-local" value="${esc(g.deadline||'')}"></div>
     </div>
+    <div class="form-row">
+      <div class="form-group"><label>到貨日期（囤貨期限起算，+2個月）</label><input id="gsArrived" type="date" value="${g.arrivedAt?new Date(g.arrivedAt).toISOString().slice(0,10):''}"></div>
+    </div>
     <div class="form-group" style="margin:10px 0"><label>官方預計出貨時間</label><input id="gsOfficialShip" value="${esc(g.officialShip||'')}" placeholder="例：2026/10 預定"></div>
     <div class="form-group" style="margin:10px 0"><label>官網 / 官店網址</label><input id="gsOfficialUrl" value="${esc(g.officialUrl||'')}" placeholder="例：https://example.com"></div>
+    <div class="form-group" style="margin:10px 0"><label>特殊團（★｜固位 pass 監控）</label>
+      <label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" id="gsStar" ${g.starGroup?'checked':''}>★ 標記為特殊團
+        <span class="muted" style="font-size:11px">固團成員沒喊自己固位角色的商品即算一次 pass</span></label></div>
+    <div class="form-group" style="margin:10px 0"><label>包含的團體</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px 14px">
+      ${getUnits().length?getUnits().map(u=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" class="gsUnit" value="${u.id}" ${(g.unitIds||[]).includes(u.id)?'checked':''}>
+        ${u.icon?`<img src="${u.icon}" style="width:18px;height:18px;object-fit:cover;border-radius:4px">`:''}${esc(u.name)}</label>`).join('')
+        :'<span class="muted">尚未建立團體，請至「團體管理」新增</span>'}
+      </div></div>
     <div class="form-row">
       <div class="form-group"><label>狀態</label>
         <select id="gsStatus">${getStatuses().map(s=>`<option ${g.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
@@ -1398,16 +1539,28 @@ function renderGroupSettingsTab(g){
     <div class="btn-row"><button class="bp" onclick="saveGroupSettings(${g.id})">儲存團內設定</button></div>
   </div>`;
 }
+// 記錄轉成「已到貨」的時間（囤貨期限起算點）；改回未到貨狀態則清除
+function markArrival(g,newStatus){
+  const arrived=['已到貨','已結團'].includes(newStatus);
+  if(arrived&&!g.arrivedAt)g.arrivedAt=Date.now();
+  if(!arrived&&g.arrivedAt)delete g.arrivedAt;
+}
 function saveGroupSettings(id){
   upG(id,g=>{
     g.name=$('#gsName').value.trim()||g.name;
     g.type=$('#gsType').value;
     g.desc=$('#gsDesc').value.trim();
     g.status=$('#gsStatus').value;
+    markArrival(g,g.status);
+    // 手動指定到貨日期優先（中午起算避免時區誤差）
+    const av=$('#gsArrived')?.value;
+    if(av)g.arrivedAt=new Date(av+'T12:00').getTime();
     const dv=$('#gsDate').value;if(dv)g.createdAt=dv.replace(/-/g,'/');
     g.deadline=$('#gsDeadline').value||'';
     g.officialShip=$('#gsOfficialShip').value.trim();
     g.officialUrl=$('#gsOfficialUrl').value.trim();
+    g.starGroup=$('#gsStar')?.checked||false;
+    g.unitIds=[...document.querySelectorAll('.gsUnit:checked')].map(cb=>parseInt(cb.value));
     if(_gCover!==null)g.cover=_gCover;
     g.coverPosX=parseInt($('#gCoverX')?.value)||50;
     g.coverPosY=parseInt($('#gCoverY')?.value)||50;
@@ -1415,7 +1568,6 @@ function saveGroupSettings(id){
   render();
 }
 
-// ── Export Tab ──
 function renderExportTab(g){
   return `<div class="card"><h3>匯出</h3><div class="btn-row" style="margin-bottom:10px;flex-wrap:wrap;gap:6px">
     <button onclick="doExport(${g.id},'text')">純文字</button>
@@ -1424,7 +1576,6 @@ function renderExportTab(g){
     <button class="bp" onclick="exportXls(${g.id})">匯出 Excel</button>
     ${g.type==='box'?`<button class="bp" onclick="exportSummaryXls(${g.id})">匯出總表</button>`:''}</div><div id="exportBox"></div></div>`;
 }
-// 總表：列=買家，欄=各商品（格內為款式+數量摘要），後接金額/收款/出貨/備註
 function exportSummaryXls(gid){
   const g=getG(gid);if(!g)return;
   const bps=g.boxProducts||[];
@@ -1495,10 +1646,7 @@ function exportSummaryXls(gid){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${g.name}_總表.xls`;a.click();
 }
 
-// ══════ Actions ══════
 
-// Group CRUD
-// 團封面圖：null=未變更, ''=已移除, dataURL=新圖
 let _gCover=null;
 function coverPos(g){return `${g.coverPosX??50}% ${g.coverPosY??50}%`;}
 function updateGCoverPos(){
@@ -1572,12 +1720,17 @@ function showEditGroupModal(id){
     <div class="form-group" style="margin:10px 0"><label>說明</label><input id="mGD" value="${esc(g.desc||'')}"></div>
     <div class="form-group" style="margin:10px 0"><label>狀態</label>
       <select id="mGS">${getStatuses().map(s=>`<option ${g.status===s?'selected':''}>${s}</option>`).join('')}</select></div>
+    <label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;white-space:nowrap;margin-top:6px">
+      <input type="checkbox" id="mGStar" ${g.starGroup?'checked':''}>★ 標記為特殊團
+      <span class="muted" style="font-size:11px">固團成員沒喊自己固位角色的商品即算一次 pass</span></label>
     <div class="btn-row"><button class="bp" onclick="saveGroupEdit(${id})">儲存</button><button onclick="closeModal()">取消</button>
     <div style="flex:1"></div><button class="bd" onclick="deleteGroup(${id})">刪除此團</button></div>`);
 }
 function saveGroupEdit(id){
   upG(id,g=>{
     g.name=$('#mGN').value.trim()||g.name;g.type=$('#mGT').value;g.desc=$('#mGD').value.trim();g.status=$('#mGS').value;
+    g.starGroup=$('#mGStar')?.checked||false;
+    markArrival(g,g.status);
     const dv=$('#mGDate').value;if(dv)g.createdAt=dv.replace(/-/g,'/');
     g.deadline=$('#mGDL').value||'';
     g.officialShip=$('#mGShip').value.trim();
@@ -1590,7 +1743,6 @@ function saveGroupEdit(id){
 }
 function deleteGroup(id){if(!confirm('確定刪除？'))return;const db=loadDB();db.groups=db.groups.filter(g=>g.id!==id);saveDB(db);closeModal();goHome();}
 
-// Order CRUD
 function bulkAdd(id){
   const text=$('#bulkIn').value.trim();if(!text)return;
   const lines=text.split('\n').filter(l=>l.trim());
@@ -1638,7 +1790,6 @@ function onShotFiles(input){
   }
   input.value='';
 }
-// 喊單 modal 開啟時可 Ctrl+V 貼上截圖
 document.addEventListener('paste',e=>{
   if(!$('#mOShots'))return;
   for(const it of (e.clipboardData?.items||[])){
@@ -1652,7 +1803,6 @@ document.addEventListener('paste',e=>{
 function showSingleOrderModal(id){
   const g=getG(id);_mGid=id;_mRowId=0;
   const isBox=g.type==='box';
-  // 拆盒團的暱稱清單預設包含固團成員
   const nicks=[...new Set([...(isBox?Object.keys(getTeam()):[]),...g.orders.map(o=>o.nick)])];
   const bps=(g.boxProducts||[]);
   const st=S();
@@ -1677,7 +1827,6 @@ function showSingleOrderModal(id){
     <div style="margin-bottom:10px"><button class="bs" onclick="addOrderRow()">＋ 再加一筆</button></div>
     <div class="btn-row"><button class="bp" onclick="addMultiOrder()">全部新增</button><button onclick="closeModal()">取消</button></div>`);
   addOrderRow();
-  // 輸入既有暱稱時自動帶入聯絡方式與既有截圖
   const nickEl=$('#mON');
   const loadBuyer=()=>{
     const b=getBuyers()[nickEl.value.trim()];
@@ -1714,7 +1863,6 @@ function addOrderRow(){
     itemField=`<div class="form-group" style="flex:1;min-width:0"><label>${esc(st.fieldItem)}</label>
       <input class="moI" list="dlI_${r}"><datalist id="dlI_${r}">${allItems.map(n=>`<option value="${esc(n)}">`).join('')}</datalist></div>`;
   }
-  // 所有列固定預留右側刪除鈕空間，讓欄寬一致（form-row 預設是 grid，這裡改用 flex 單行排版）
   div.style.display='flex';
   div.style.position='relative';div.style.paddingRight='30px';
   div.style.flexWrap='nowrap';
@@ -1804,7 +1952,6 @@ function addMultiOrder(){
   }
   const isLift=!!$('#mOLift')?.checked;
   if(isLift){
-    // 帶餘提配前提：該暱稱在該商品「未成團的配」裡有喊單（已成團的不算）
     for(const e of entries){
       const p=e.bpId?(g.boxProducts||[]).find(b=>b.id===e.bpId):(g.boxProducts||[]).find(b=>b.contents.includes(e.item));
       if(!p){alert(`「${e.item}」未對應任何商品，無法帶餘提配`);return;}
@@ -1856,7 +2003,6 @@ function saveOrderEdit(gid,oid){
 function delOrder(gid,oid){if(!confirm('刪除？'))return;upG(gid,g=>{g.orders=g.orders.filter(o=>o.id!==oid);});render();}
 function clearOrders(gid){if(!confirm('清除全部喊單？'))return;upG(gid,g=>{g.orders=[];});render();}
 
-// Item CRUD (carry)
 function showAddItemModal(gid){
   const g=getG(gid);
   const existingNames=new Set((g.items||[]).map(i=>i.name));
@@ -1935,7 +2081,6 @@ function delItem(gid,iid){
   render();
 }
 
-// Box Product CRUD
 function toggleBpKind(){
   const isSingle=document.querySelector('input[name=bpKind]:checked')?.value==='single';
   const boxOnly=$('#bpBoxOnly');if(boxOnly)boxOnly.style.display=isSingle?'none':'block';
@@ -1943,7 +2088,6 @@ function toggleBpKind(){
 }
 function refreshBindInputs(existing){
   const box=$('#bindInputs');if(!box)return;
-  // 保留目前勾選狀態
   const cur={};
   box.querySelectorAll('.bindCb').forEach(cb=>{
     if(cb.checked){const n=box.querySelector(`.bindN[data-c="${CSS.escape(cb.dataset.c)}"]`);cur[cb.dataset.c]=parseInt(n?.value)||1;}
@@ -1969,7 +2113,6 @@ function collectBindItems(contents){
   return bindItems;
 }
 function refreshBpModalInputs(){refreshPriceInputs();refreshBindInputs();}
-// 商品圖：縮圖存 localStorage（自動縮到 400px 寬內）
 let _bpImg=null; // null=未變更, ''=已移除, dataURL=新圖
 function imgFileToData(f,cb,max,quality){
   if(!f)return;
@@ -1989,7 +2132,6 @@ function imgFileToData(f,cb,max,quality){
   };
   reader.readAsDataURL(f);
 }
-// 喊單人資料
 function getBuyers(){return loadDB().buyers||{};}
 function updateBuyer(nick,contact,url,addShots){
   const db=loadDB();
@@ -2028,7 +2170,6 @@ function setBpImgFile(f){
   reader.readAsDataURL(f);
 }
 function onBpImgChange(input){setBpImgFile(input.files[0]);}
-// 商品/團封面 modal 開啟時，直接 Ctrl+V 貼上圖片
 document.addEventListener('paste',e=>{
   const isBp=!!$('#bpImgPrev'),isCover=!!$('#gCoverPrev');
   if(!isBp&&!isCover)return;
@@ -2102,7 +2243,6 @@ function addBoxProduct(gid){
   const kind=document.querySelector('input[name=bpKind]:checked')?.value||'box';
   const img=_bpImg||'';
   if(kind==='single'){
-    // 單領可不填款式：以商品名作為唯一款式
     if(!contents.length)contents=[name];
     const unitPrice=parseFloat($('#bpUnit')?.value)||0;
     upG(gid,g=>{if(!g.boxProducts)g.boxProducts=[];
@@ -2195,7 +2335,6 @@ function delBoxProduct(gid,bid){
   render();
 }
 
-// Priority calc (carry)
 let _lastPrioResult=null;
 function calcPriority(gid){
   const g=getG(gid);if(!g.orders.length){$('#prioResult').innerHTML='<div class="empty">無喊單</div>';return;}
@@ -2299,7 +2438,6 @@ function exportPrioXls(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${g.name}_帶多結果.xls`;a.click();
 }
 
-// Export
 function doExport(gid,type){
   const g=getG(gid);const st=S();
   if(type==='csv'){
@@ -2329,7 +2467,6 @@ function doExport(gid,type){
   const box=$('#exportBox');if(box)box.innerHTML=`<div class="export-box">${esc(text)}</div>`;
 }
 
-// Price adjustment helpers
 function togglePriceSection(){
   const sec=$('#priceSection');
   if(!sec)return;
@@ -2344,7 +2481,6 @@ function refreshPriceInputs(existing){
   const avg=parseFloat($('#bpAvg')?.value)||0;
   let h='<div class="price-grid">';
   for(const c of contents){
-    // 輸入的是相對均價的 ± 差額；編輯時由最終價換算回差額
     const val=existing&&existing[c]!=null?(existing[c]-avg):0;
     h+=`<label>${esc(c)}</label><input id="ip_${esc(c)}" type="number" value="${val}" placeholder="+5 / -5" oninput="updatePriceSummary()">`;
   }
@@ -2378,7 +2514,6 @@ function lookupPrice(g,itemName,bpId){
   if(!itemName)return null;
   if(g.type==='carry'){const it=(g.items||[]).find(i=>i.name===itemName);if(it&&it.price)return it.price;}
   if(g.type==='box'){
-    // 指定商品時只查該商品（款式名可跨商品重複）
     if(bpId){
       const p=(g.boxProducts||[]).find(b=>b.id===bpId);
       if(p){
@@ -2393,29 +2528,24 @@ function lookupPrice(g,itemName,bpId){
   }
   return null;
 }
-// 顯示用即時價格：拆盒/帶多以目前設定為準（調價後立即反映），一般代購用喊單時輸入的價格
 function effPrice(g,o){
   if(g.type==='basic')return o.price||0;
   const p=lookupPrice(g,o.item,o.bpId);
   return p!=null?p:(o.price||0);
 }
-// 喊單時間顯示（舊喊單無記錄顯示 -）
 function fmtTs(ts){
   if(!ts)return '-';
   const d=new Date(ts);
   return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
 }
-// 喊單是否屬於某個拆盒/單領商品：新資料用 bpId 精準比對，舊資料退回名稱比對
 function orderMatches(p,o){
   return o.bpId?o.bpId===p.id:p.contents.includes(o.item);
 }
-// 顯示用「商品-款式」標籤；單領以商品名為唯一款式時只顯示商品名
 function bpItemLabel(bp,item){
   if(!bp)return item;
   if(bp.contents.length===1&&bp.contents[0]===bp.name)return bp.name;
   return `${bp.name}-${item}`;
 }
-// 已確認的喊單：拆盒商品只計入成團/含綁成團的配，單領與未對應喊單照原樣
 function getConfirmedOrders(g){
   if(g.type!=='box'||!(g.boxProducts||[]).length)return g.orders;
   const res=[];const covered=new Set();
@@ -2444,7 +2574,6 @@ function getConfirmedOrders(g){
   return res;
 }
 
-// Excel Export
 function exportXls(gid){
   const g=getG(gid);if(!g)return;
   const st=S();
@@ -2484,7 +2613,6 @@ function exportXls(gid){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${g.name}.xls`;a.click();
 }
 
-// 圖片放大檢視
 function showImg(src){
   let ov=document.getElementById('imgLightbox');
   if(!ov){
@@ -2506,13 +2634,11 @@ function openOfficialUrl(urlEnc){
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){const ov=document.getElementById('imgLightbox');if(ov)ov.style.display='none';}});
 
-// Modal & Util
 function openModal(html){$('#modalContent').innerHTML=html;$('#modalBg').classList.add('show');}
 function closeModal(){$('#modalBg').classList.remove('show');}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 
-// Settings UI
 function showSettings(){
   const s=S();
   openModal(`<h3>⚙ 設定</h3>
@@ -2600,8 +2726,6 @@ function doSaveSettings(){
   closeModal();applyTheme();render();
 }
 
-// ── 修改頁面內容（文字覆寫） ──
-// 數字會被 {1}、{2} 佔位符取代，只讓使用者改文字部分
 function normText(s){
   let i=0;const nums=[];
   const tpl=s.replace(/[\d][\d,.]*/g,m=>{nums.push(m);return `{${++i}}`;});
@@ -2640,7 +2764,6 @@ function editElementText(el){
   const full=tns.map(n=>n.nodeValue).join('');
   const{tpl}=normText(full);
   const map=loadTextOv();
-  // 若目前顯示的已是覆寫後文字，找回原始 key
   let key=tpl;
   for(const[k,v]of Object.entries(map)){if(v===tpl){key=k;break;}}
   const cur=map[key]||tpl;
@@ -2672,10 +2795,9 @@ document.addEventListener('click',e=>{
   btn.onclick=toggleEditMode;
   document.body.appendChild(btn);
 })();
-// 唯讀模式：移除所有編輯用的按鈕與點擊行為（白名單內的瀏覽操作保留）
 function stripEditUI(){
   if(!RO)return;
-  const ok=/^\s*(goGroup|goHome|homeFilter|tab='|toggleBpDetail|showImg|event\.stopPropagation\(\);showImg|closeModal|showShipModal|_sp(Nick|Gid|Hide)|doExport|exportXls|exportSummaryXls|if\(event\.target)/;
+  const ok=/^\s*(goGroup|goHome|homeFilter|toggleHomeSearch|homeSearch=|tab='|toggleBpDetail|showImg|event\.stopPropagation\(\);(showImg|openOfficialUrl)|closeModal|showShipModal|_sp(Nick|Gid|Hide)|doExport|exportXls|exportSummaryXls|if\(event\.target)/;
   document.querySelectorAll('[onclick]').forEach(el=>{
     const oc=el.getAttribute('onclick')||'';
     if(ok.test(oc))return;
@@ -2684,7 +2806,6 @@ function stripEditUI(){
   });
 }
 
-// render 與 modal 後自動套用文字覆寫（唯讀模式再清除編輯介面）
 const _renderCore=render;
 render=function(){_renderCore();applyTextOverrides();stripEditUI();};
 const _openModalCore=openModal;
