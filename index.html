@@ -383,6 +383,12 @@ function renderHome(){
     <button class="gear-btn" onclick="showSettings()" title="設定">⚙</button></div>
     ${RO&&window.VIEWER_DB.publishedAt?`<div class="muted" style="margin-bottom:1rem">資料更新時間：${esc(window.VIEWER_DB.publishedAt)}</div>`:''}
     <div class="toolbar"><button class="bp" onclick="showNewGroupModal()">建立新團</button><button onclick="showFixedTeamModal()">固團成員</button><button onclick="showUnitsModal()">團體管理</button><button onclick="showShipModal()">個人貨況查詢</button><button onclick="document.getElementById('importDataFile').click()">匯入 data.js</button><input id="importDataFile" type="file" accept=".js,.txt" style="display:none" onchange="importViewerData(this)"><button onclick="exportViewerData()">發布查詢資料</button><span class="muted">共 ${db.groups.length} 個團</span></div>
+    <div class="toolbar" style="margin-top:-4px">
+      <button class="bs" onclick="exportFullBackup()" title="匯出含全部團與私人資料的完整備份，用於裝置間手動同步">📦 匯出完整備份</button>
+      <button class="bs" onclick="document.getElementById('importBackupFile').click()" title="匯入完整備份，會覆蓋此裝置的所有資料">📥 匯入完整備份</button>
+      <input id="importBackupFile" type="file" accept=".json" style="display:none" onchange="importFullBackup(this)">
+      <span class="muted" style="font-size:11px">兩裝置間手動同步用（不影響團員看到的畫面）</span>
+    </div>
     <div class="filter-chips"><span class="chip ${homeFilter===''?'active':''}" onclick="homeFilter='';render()">全部</span>
     ${RO
       ?['進行中','已截團待收款','收款中','已完成收款','已到貨'].map(s=>`<span class="chip ${homeFilter===s?'active':''}" onclick="homeFilter='${s}';render()">${s}</span>`).join('')
@@ -646,6 +652,47 @@ function exportViewerData(){
   const blob=new Blob([file],{type:'text/javascript'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='data.js';a.click();
   alert('已下載 data.js。\n把「index.html＋data.js」一起上傳到網站空間（index.html 有 data.js 在旁邊時會自動變成唯讀查詢版）。\n之後資料更新，只要重新發布並覆蓋 data.js。');
+}
+// ── 完整備份（給自己兩台裝置手動同步用，含全部團與私人資料，不做任何刪減） ──
+function exportFullBackup(){
+  const db=loadDB();
+  const pkg={
+    kind:'gp_full_backup',
+    version:1,
+    db,
+    settings:loadSettings(),
+    textOv:loadTextOv(),
+    exportedAt:new Date().toLocaleString('zh-TW')
+  };
+  const blob=new Blob([JSON.stringify(pkg)],{type:'application/json'});
+  const a=document.createElement('a');
+  const ts=new Date();
+  const stamp=`${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,'0')}${String(ts.getDate()).padStart(2,'0')}_${String(ts.getHours()).padStart(2,'0')}${String(ts.getMinutes()).padStart(2,'0')}`;
+  a.href=URL.createObjectURL(blob);a.download=`備份_${stamp}.json`;a.click();
+  alert('已下載完整備份（含全部團、聯絡方式、截圖、個人備註）。\n傳到另一台裝置後用「匯入完整備份」讀取即可同步。');
+}
+function importFullBackup(input){
+  const f=input.files&&input.files[0];
+  input.value='';
+  if(!f)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const pkg=JSON.parse(String(e.target.result));
+      if(pkg.kind!=='gp_full_backup'||!pkg.db)throw new Error('格式不符');
+      if(!confirm(`匯入完整備份會覆蓋此裝置目前的所有資料（含全部團）。\n備份時間：${pkg.exportedAt||'未知'}\n確定繼續？`))return;
+      localStorage.setItem('gp_db2',JSON.stringify(pkg.db));
+      if(pkg.settings)localStorage.setItem('gp_settings',JSON.stringify(pkg.settings));
+      if(pkg.textOv)localStorage.setItem('gp_text_overrides',JSON.stringify(pkg.textOv));
+      _vdb=null;view='home';gid=null;tab='orders';sNick='';sItem='';homeFilter='';
+      alert('備份匯入完成');
+      applyTheme();render();
+    }catch(err){
+      alert('匯入失敗：請確認選的是「匯出完整備份」產生的檔案');
+      console.error(err);
+    }
+  };
+  reader.readAsText(f);
 }
 function importViewerData(input){
   const f=input.files&&input.files[0];
