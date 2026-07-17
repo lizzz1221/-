@@ -1391,9 +1391,13 @@ function renderPriorityTab(g){
 function renderBuyersTab(g){
   const st=S();const byB={};
   for(const o of getConfirmedOrders(g)){
-    if(!byB[o.nick])byB[o.nick]={items:new Set(),orders:[],qty:0,amt:0};
+    if(!byB[o.nick])byB[o.nick]={items:new Set(),orders:[],qty:0,amt:0,sur:0};
     byB[o.nick].items.add(o.item);byB[o.nick].orders.push(o);byB[o.nick].qty+=o.qty;byB[o.nick].amt+=o.qty*effPrice(g,o);
+    // 二補（國際運費均攤）＝商品設定的每件二補 × 數量，與商品金額分開統計
+    const surBp=(g.boxProducts||[]).find(p=>orderMatches(p,o)&&p.contents.includes(o.item));
+    byB[o.nick].sur+=(surBp&&surBp.surcharge?surBp.surcharge:0)*o.qty;
   }
+  const hasSur=Object.values(byB).some(d=>d.sur>0);
   const hiddenStats=new Set(g.hiddenStatsNicks||[]);
   const allSorted=Object.entries(byB).sort((a,b)=>b[1].qty-a[1].qty);
   const sorted=allSorted.filter(([nick])=>!hiddenStats.has(nick));
@@ -1415,9 +1419,9 @@ function renderBuyersTab(g){
     }
     h+=`<div style="margin-bottom:14px;padding:10px;background:#fef7fa;border-radius:8px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
-        <strong>${esc(nick)}</strong><span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="muted">${d.qty} 件 · $${d.amt.toLocaleString()}</span>${RO?'':`<button class="bs bg" style="color:#a32d2d" onclick="hideBuyerStat(${g.id},'${encodeURIComponent(nick)}')">隱藏</button>`}</span></div>
+        <strong>${esc(nick)}</strong><span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="muted">${d.qty} 件 · $${d.amt.toLocaleString()}${d.sur>0?` · 二補 $${d.sur.toLocaleString()}`:''}</span>${RO?'':`<button class="bs bg" style="color:#a32d2d" onclick="hideBuyerStat(${g.id},'${encodeURIComponent(nick)}')">隱藏</button>`}</span></div>
       ${buyerLine}
-      <div style="overflow-x:auto"><table><thead><tr><th>商品</th><th>${esc(st.fieldQty)}</th>${hasAnyAdj?'<th>調價</th>':`<th>${esc(st.fieldPrice)}</th>`}<th>小計</th><th>${esc(st.fieldNote)}</th><th>到貨狀況</th><th>出貨</th></tr></thead><tbody>`;
+      <div style="overflow-x:auto"><table><thead><tr><th>商品</th><th>${esc(st.fieldQty)}</th>${hasAnyAdj?'<th>調價</th>':`<th>${esc(st.fieldPrice)}</th>`}<th>小計</th>${hasSur?'<th>二補</th>':''}<th>${esc(st.fieldNote)}</th><th>到貨狀況</th><th>出貨</th></tr></thead><tbody>`;
     const groupArrived=['已到貨','已結團'].includes(g.status);
     for(const o of d.orders){
       const price=effPrice(g,o);
@@ -1438,7 +1442,8 @@ function renderBuyersTab(g){
       const shipCell=RO
         ?`<span class="badge ${shipped?'b-green':'b-gray'}">${shipped?'已出貨':'未出貨'}</span>`
         :`<input type="checkbox" ${shipped?'checked':''} title="勾選＝已出貨" onchange="toggleShipKey(${g.id},'${encodeURIComponent(shipKey)}')">`;
-      h+=`<tr><td>${esc(label)}</td><td>${o.qty}</td><td>${price?'$'+price:'-'}</td><td>${price?'$'+(o.qty*price):'-'}</td><td class="muted">${esc(o.note||'')}</td><td>${arrCell}</td><td>${shipCell}</td></tr>`;
+      const surAmt=(bp&&bp.surcharge?bp.surcharge:0)*o.qty;
+      h+=`<tr><td>${esc(label)}</td><td>${o.qty}</td><td>${price?'$'+price:'-'}</td><td>${price?'$'+(o.qty*price):'-'}</td>${hasSur?`<td>${surAmt?'$'+surAmt:'-'}</td>`:''}<td class="muted">${esc(o.note||'')}</td><td>${arrCell}</td><td>${shipCell}</td></tr>`;
     }
     h+=`</tbody></table></div></div>`;
   }}
@@ -2263,6 +2268,7 @@ function showAddBoxProductModal(gid,defaultKind){
     ${bpImgField('')}
     <div class="form-group" style="margin:10px 0"><label>款式（每行一款，或用 / 分隔）</label>
       <textarea id="bpC" placeholder="角色A&#10;角色B&#10;角色C&#10;..." rows="5" oninput="refreshBpModalInputs()"></textarea></div>
+    <div class="form-row"><div class="form-group"><label>二補（每件國際運費均攤，選填）</label><input id="bpSur" type="number" min="0" placeholder="到貨後設定"></div></div>
     <div id="bpBoxOnly" style="display:${isSingle?'none':'block'}">
       <div class="form-row">
         <div class="form-group"><label>均價（每款基準價）</label><input id="bpAvg" type="number" min="0" placeholder="例：50" oninput="updatePriceSummary()"></div>
@@ -2289,11 +2295,12 @@ function addBoxProduct(gid){
   let contents=raw.split(/[\n\/,，]/).map(s=>s.trim()).filter(Boolean);
   const kind=document.querySelector('input[name=bpKind]:checked')?.value||'box';
   const img=_bpImg||'';
+  const surcharge=parseFloat($('#bpSur')?.value)||0;
   if(kind==='single'){
     if(!contents.length)contents=[name];
     const unitPrice=parseFloat($('#bpUnit')?.value)||0;
     upG(gid,g=>{if(!g.boxProducts)g.boxProducts=[];
-      g.boxProducts.push({id:g.nBid++,name,kind:'single',contents,unitPrice,maxBoxes:0,pricePerBox:0,adjustPrice:false,avgPrice:0,itemPrices:{},img});});
+      g.boxProducts.push({id:g.nBid++,name,kind:'single',contents,unitPrice,maxBoxes:0,pricePerBox:0,adjustPrice:false,avgPrice:0,itemPrices:{},img,surcharge});});
     closeModal();render();return;
   }
   if(!contents.length){alert('請輸入至少一個款式');return;}
@@ -2305,7 +2312,7 @@ function addBoxProduct(gid){
   const bindItems=collectBindItems(contents);
   const sortRule=document.querySelector('input[name=bpSort]:checked')?.value||'fifo';
   upG(gid,g=>{if(!g.boxProducts)g.boxProducts=[];
-    g.boxProducts.push({id:g.nBid++,name,kind:'box',contents,maxBoxes:parseInt($('#bpMax').value)||0,pricePerBox:parseFloat($('#bpPrice').value)||0,adjustPrice:adj,avgPrice,itemPrices:adj?itemPrices:{},bindItems,sortRule,img});});
+    g.boxProducts.push({id:g.nBid++,name,kind:'box',contents,maxBoxes:parseInt($('#bpMax').value)||0,pricePerBox:parseFloat($('#bpPrice').value)||0,adjustPrice:adj,avgPrice,itemPrices:adj?itemPrices:{},bindItems,sortRule,img,surcharge});});
   closeModal();render();
 }
 function showEditBoxProductModal(gid,bid){
@@ -2323,6 +2330,7 @@ function showEditBoxProductModal(gid,bid){
     ${bpImgField(p.img||'')}
     <div class="form-group" style="margin:10px 0"><label>款式（每行一款）</label>
       <textarea id="bpC" rows="5" oninput="refreshBpModalInputs()">${esc(p.contents.join('\n'))}</textarea></div>
+    <div class="form-row"><div class="form-group"><label>二補（每件國際運費均攤，選填）</label><input id="bpSur" type="number" min="0" value="${p.surcharge||''}" placeholder="到貨後設定"></div></div>
     <div id="bpBoxOnly" style="display:${isSingle?'none':'block'}">
       <div class="form-row">
         <div class="form-group"><label>均價（每款基準價）</label><input id="bpAvg" type="number" min="0" value="${p.avgPrice||''}" oninput="updatePriceSummary()"></div>
@@ -2347,12 +2355,14 @@ function showEditBoxProductModal(gid,bid){
 function saveBoxProductEdit(gid,bid){
   let contents=$('#bpC').value.trim().split(/[\n\/,，]/).map(s=>s.trim()).filter(Boolean);
   const kind=document.querySelector('input[name=bpKind]:checked')?.value||'box';
+  const surcharge=parseFloat($('#bpSur')?.value)||0;
   if(kind==='single'){
     const unitPrice=parseFloat($('#bpUnit')?.value)||0;
     upG(gid,g=>{const p=(g.boxProducts||[]).find(b=>b.id===bid);if(!p)return;
       p.name=$('#bpN').value.trim()||p.name;p.kind='single';
       p.contents=contents.length?contents:[p.name];p.unitPrice=unitPrice;
       p.maxBoxes=0;p.pricePerBox=0;p.adjustPrice=false;p.avgPrice=0;p.itemPrices={};
+      p.surcharge=surcharge;
       if(_bpImg!==null)p.img=_bpImg;});
     closeModal();render();return;
   }
@@ -2366,7 +2376,7 @@ function saveBoxProductEdit(gid,bid){
   const sortRule=document.querySelector('input[name=bpSort]:checked')?.value||'fifo';
   upG(gid,g=>{const p=(g.boxProducts||[]).find(b=>b.id===bid);if(!p)return;
     p.name=$('#bpN').value.trim()||p.name;p.kind='box';p.contents=contents;p.maxBoxes=parseInt($('#bpMax').value)||0;p.pricePerBox=parseFloat($('#bpPrice').value)||0;
-    p.adjustPrice=adj;p.avgPrice=avgPrice;p.itemPrices=adj?itemPrices:{};p.bindItems=bindItems;p.sortRule=sortRule;
+    p.adjustPrice=adj;p.avgPrice=avgPrice;p.itemPrices=adj?itemPrices:{};p.bindItems=bindItems;p.sortRule=sortRule;p.surcharge=surcharge;
     if(_bpImg!==null)p.img=_bpImg;});
   closeModal();render();
 }
