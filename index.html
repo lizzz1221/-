@@ -787,6 +787,57 @@ function utf8ToBase64(str){
   for(let i=0;i<bytes.length;i+=size)bin+=String.fromCharCode(...bytes.subarray(i,i+size));
   return btoa(bin);
 }
+async function sha256Text(str){
+  const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function githubPagesFileUrl(c,filePath){
+  const path=filePath.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+  return 'https://'+c.owner+'.github.io/'+encodeURIComponent(c.repo)+'/'+path;
+}
+function findDataImages(root){
+  const found=new Map();
+  const visit=value=>{
+    if(!value||typeof value!=='object')return;
+    for(const key of Object.keys(value)){
+      const item=value[key];
+      if(typeof item==='string'&&/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(item)){
+        if(!found.has(item))found.set(item,[]);
+        found.get(item).push({parent:value,key});
+      }else if(item&&typeof item==='object')visit(item);
+    }
+  };
+  visit(root);
+  return found;
+}
+async function uploadDataImage(c,dataUrl){
+  const match=dataUrl.match(/^data:(image\/(?:png|jpeg|webp|gif));base64,(.+)$/i);
+  if(!match)throw new Error('圖片格式無法上傳');
+  const ext={'image/png':'png','image/jpeg':'jpg','image/webp':'webp','image/gif':'gif'}[match[1].toLowerCase()]||'jpg';
+  const hash=await sha256Text(dataUrl);
+  const filePath='images/'+hash.slice(0,24)+'.'+ext;
+  const existing=await ghFetch(c,filePath,{query:'?ref='+encodeURIComponent(c.branch),allow404:true});
+  if(existing.status===404){
+    await ghFetch(c,filePath,{method:'PUT',body:JSON.stringify({
+      message:'Upload image from admin page',content:match[2],branch:c.branch
+    })});
+  }
+  return githubPagesFileUrl(c,filePath);
+}
+async function migrateDataImagesToGithub(c){
+  const db=loadDB();
+  const images=findDataImages(db);
+  if(!images.size)return 0;
+  let done=0;
+  for(const [dataUrl,refs] of images){
+    setGhStatus('正在上傳圖片 '+(done+1)+' / '+images.size+'...');
+    const url=await uploadDataImage(c,dataUrl);
+    for(const ref of refs)ref.parent[ref.key]=url;
+    saveDB(db);
+    done++;
+  }
+  return done;
+}
 async function ghFetch(c,filePath,opts={}){
   const cleanPath=filePath.replace(/^\/+/, '');
   const url='https://api.github.com/repos/'+encodeURIComponent(c.owner)+'/'+encodeURIComponent(c.repo)+'/contents/'+cleanPath+(opts.query||'');
@@ -800,7 +851,7 @@ async function ghFetch(c,filePath,opts={}){
     },
     body:opts.body
   });
-  if(!res.ok){
+  if(!res.ok&&!(opts.allow404&&res.status===404)){
     const text=await res.text();
     throw new Error('GitHub 回應 '+res.status+'：'+text.slice(0,240));
   }
@@ -832,8 +883,9 @@ async function githubPullData(){
 async function githubPushData(){
   try{
     const c=ghRequireConfig();
+    if(!confirm('要把目前管理頁資料同步到 GitHub，覆蓋 '+c.path+' 嗎？\n\n新圖片會自動上傳，不需要另外手動處理。'))return;
+    const imageCount=await migrateDataImagesToGithub(c);
     const data=buildViewerDataJs();
-    if(!confirm('要把目前管理頁資料同步到 GitHub，覆蓋 '+c.path+' 嗎？'))return;
     setGhStatus('正在取得 GitHub 檔案資訊...');
     const info=await ghFetch(c,c.path,{query:'?ref='+encodeURIComponent(c.branch)}).then(r=>r.json());
     setGhStatus('正在上傳 data.js 到 GitHub...');
@@ -846,7 +898,7 @@ async function githubPushData(){
         branch:c.branch
       })
     }).then(r=>r.json());
-    setGhStatus('同步完成。GitHub Pages 可能需要等幾十秒才會更新。');
+    setGhStatus('同步完成。'+(imageCount?'已自動上傳 '+imageCount+' 張圖片。':'')+' GitHub Pages 可能需要等幾十秒才會更新。');
   }catch(err){
     setGhStatus('同步失敗：'+err.message);
     console.error(err);
